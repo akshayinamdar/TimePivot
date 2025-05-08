@@ -15,11 +15,11 @@
 // Input Parameters
 // ===============================
 // Risk Management
-input double   InpRiskPercent = 1.0;             // Risk per trade (% of balance)
+input double   InpRiskPercent = 2.0;             // Risk per trade (% of balance)
 input int      InpMaxConcurrentTrades = 1;       // Maximum concurrent trades per symbol
-input double   InpDailyLossLimit = 30.0;         // Daily loss limit (%)
-input double   InpStepDownLevel1 = 15.0;         // First level to reduce position size (%)
-input double   InpStepDownLevel2 = 24.0;         // Second level to limit to trend direction (%)
+input double   InpDailyLossLimit = 60.0;         // Daily loss limit (%)
+input double   InpStepDownLevel1 = 60.0;         // First level to reduce position size (%)
+input double   InpStepDownLevel2 = 60.0;         // Second level to limit to trend direction (%)
 
 // Time-based Exit Parameters
 input int      InpLossTimeLimit = 10;            // Time to cut losses (minutes)
@@ -36,10 +36,10 @@ input int      InpCloseAllHour = 22;             // Hour to close all trades to 
 input int      InpMinutesBeforeSessionEnd = 30;  // Minutes before session end to stop new trades
 
 // Momentum & Volatility Parameters
-input int      InpTickMomentumPeriod = 30;       // Ticks to analyze for momentum (increased)
-input double   InpMomentumThreshold = 2.0;       // Momentum burst threshold multiplier (increased)
+input int      InpTickMomentumPeriod = 15;       // Ticks to analyze for momentum (increased)
+input double   InpMomentumThreshold = 1.11;       // Momentum burst threshold multiplier (increased)
 input double   InpDirectionalThreshold = 0.7;     // Directional strength threshold (0.0-1.0) (increased)
-input double   InpVolatilityThreshold = 2.0;     // Volatility expansion threshold (std dev)
+input double   InpVolatilityThreshold = 2.4;     // Volatility expansion threshold (std dev)
 input double   InpLowVolFreqThreshold = 0.6;     // Low volatility frequency threshold (increased)
 
 // Global Variables
