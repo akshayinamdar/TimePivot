@@ -24,6 +24,13 @@ input double   InpStepDownLevel2 = 24.0;         // Second level to limit to tre
 // Time-based Exit Parameters
 input int      InpLossTimeLimit = 1;             // Time to cut losses (minutes)
 input int      InpProfitRunTimeMultiplier = 6;   // Profit run time multiplier
+input double   InpMinProfitPoints = 10.0;        // Minimum profit points to consider trade profitable
+
+// Trading Hours Restrictions
+input bool     InpUseTimeRestrictions = true;    // Use trading hour restrictions
+input int      InpTradingStartHour = 6;          // Trading start hour (0-23)
+input int      InpTradingEndHour = 21;           // Trading end hour (0-23)
+input int      InpCloseAllHour = 22;             // Hour to close all trades to avoid swap (0-23)
 
 // Momentum & Volatility Parameters
 input int      InpTickMomentumPeriod = 15;       // Ticks to analyze for momentum
@@ -141,9 +148,8 @@ void OnTick()
    
    // Check if trading is allowed based on daily loss limit
    CheckDailyLossLimits();
-   
-   // Trading logic
-   if(TradingAllowed && OpenTradeCount < InpMaxConcurrentTrades) {
+     // Trading logic
+   if(TradingAllowed && OpenTradeCount < InpMaxConcurrentTrades && IsWithinTradingHours()) {
       // Check for entry signals
       CheckEntrySignals();
    }
@@ -372,9 +378,15 @@ void OpenTrade(bool isLong)
    // Check if we can trade
    if(!TradingAllowed || OpenTradeCount >= InpMaxConcurrentTrades) return;
    
+   // Check if within trading hours
+   if(InpUseTimeRestrictions && !IsWithinTradingHours()) {
+      Print("Trade signal detected but outside trading hours (", InpTradingStartHour, ":00 - ", InpTradingEndHour, ":00)");
+      return;
+   }
+   
    // Calculate position size based on risk
    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (InpRiskPercent / 100.0) * ReducedRiskFactor;
-   double stopLossDistance = 20 * POINT_VALUE;  // Initial SL distance (to be adjusted)
+   double stopLossDistance = 150 * POINT_VALUE;  // Initial SL distance (to be adjusted)
    double positionSize = CalculatePositionSize(riskAmount, stopLossDistance);
    
    // Define entry price
@@ -462,6 +474,19 @@ void ManageOpenTrades()
    // Current time
    datetime currentTime = TimeCurrent();
    
+   // Check if it's time to close all trades (to avoid swap)
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeLocal(), timeStruct);
+   if(timeStruct.hour == InpCloseAllHour && OpenTradeCount > 0) {
+      Print("Closing all trades to avoid swap at ", InpCloseAllHour, ":00");
+      for(int i = 0; i < OpenTradeCount; i++) {
+         if(OpenTrades[i].ticket != 0) {
+            Trade.PositionClose(OpenTrades[i].ticket);
+         }
+      }
+      return; // Exit after attempting to close all positions
+   }
+   
    // Loop through open trades
    for(int i = 0; i < OpenTradeCount; i++) {
       // Skip invalid tickets
@@ -529,9 +554,14 @@ void ManageOpenTrades()
          i--;
          continue;
       }
-      
-      // Calculate trade duration in minutes
+        // Calculate trade duration in minutes
       double tradeMinutes = (double)(currentTime - OpenTrades[i].openTime) / 60.0;
+      
+      // Calculate profit in points
+      double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      double positionVolume = PositionGetDouble(POSITION_VOLUME);
+      double currentPricePoints = (currentPrice - OpenTrades[i].openPrice) / pointSize;
+      if(!OpenTrades[i].isLong) currentPricePoints = -currentPricePoints;  // Invert for short positions
       
       // Time-based exit logic
       if(currentProfit < 0 && tradeMinutes >= InpLossTimeLimit) {
@@ -539,7 +569,7 @@ void ManageOpenTrades()
          Print("Closing losing trade after time limit: ", OpenTrades[i].ticket);
          Trade.PositionClose(OpenTrades[i].ticket);
       }
-      else if(currentProfit > 0) {
+      else if(currentProfit > 0 && currentPricePoints >= InpMinProfitPoints) {
          // Let profits run - widen stop loss based on time in trade
          
          // Calculate new stop loss level based on time multiplier
@@ -601,5 +631,30 @@ void CheckDailyLossLimits()
       TradingAllowed = true;
       ReducedRiskFactor = 0.5;
       Print("Loss level 1 reached (", dailyPnLPercent, "%). Trading with reduced position sizes.");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if current time is within allowed trading hours            |
+//+------------------------------------------------------------------+
+bool IsWithinTradingHours()
+{
+   // If time restrictions are not enabled, always return true
+   if(!InpUseTimeRestrictions) return true;
+   
+   // Get current time
+   MqlDateTime currentTime;
+   TimeToStruct(TimeLocal(), currentTime);
+   
+   // Check if the current hour is within the allowed range
+   int currentHour = currentTime.hour;
+   
+   // If end hour is less than start hour, it means the range spans midnight
+   if(InpTradingEndHour < InpTradingStartHour) {
+      return (currentHour >= InpTradingStartHour || currentHour <= InpTradingEndHour);
+   }
+   // Normal hour range
+   else {
+      return (currentHour >= InpTradingStartHour && currentHour <= InpTradingEndHour);
    }
 }

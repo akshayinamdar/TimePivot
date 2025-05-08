@@ -40,7 +40,15 @@ The TimePivot EA implements a "cut losses short, let profits run long" philosoph
 
 - Short time limit for cutting losses: ~3 minutes
 - Profit run time multiplier: 6x the loss time limit
+- Minimum profit threshold: 10 points required before trailing stop is activated
 - Dynamic trailing stops that widen based on trade duration
+
+## Trading Hours Restrictions
+
+- Configurable trading hours to limit exposure during unfavorable market conditions
+- Default setting: Only trade between 6:00 AM and 9:00 PM
+- Option to disable time restrictions if continuous trading is preferred
+- Automatic closing of all trades at 10:00 PM to avoid overnight swap fees
 
 ## Installation Instructions
 
@@ -63,6 +71,14 @@ The TimePivot EA implements a "cut losses short, let profits run long" philosoph
 
 - **InpLossTimeLimit** (default: 3): Minutes to cut losses
 - **InpProfitRunTimeMultiplier** (default: 6): Multiplier for profit run time
+- **InpMinProfitPoints** (default: 10.0): Minimum profit in points before trailing stop is activated
+
+### Trading Hours Parameters
+
+- **InpUseTimeRestrictions** (default: true): Enable or disable trading hour restrictions
+- **InpTradingStartHour** (default: 6): Hour to start trading (0-23)
+- **InpTradingEndHour** (default: 21): Hour to stop opening new trades (0-23)
+- **InpCloseAllHour** (default: 22): Hour to close all trades to avoid swap fees (0-23)
 
 ### Momentum & Volatility Parameters
 
