@@ -41,6 +41,10 @@ The "Stay EA" is a tick-based scalping expert advisor for MetaTrader 5 that trad
 - Profit run time multiplier: 6x the loss time limit
 - Minimum profit threshold: 10 points before trailing stop activation
 - Dynamic trailing stops that widen based on trade duration
+- Break-even functionality moves stop loss to entry + 3 points when in small profit
+- Commission consideration (10 points per trade) in all profit calculations
+- Aggressive trailing stops with 0.8 factor and time acceleration for improved profit capture
+- Partial position closing at significant profit levels (50% at 30+ points)
 
 ## Trading Hour Constraints
 

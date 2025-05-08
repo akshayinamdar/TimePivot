@@ -16,28 +16,31 @@
 // ===============================
 // Risk Management
 input double   InpRiskPercent = 1.0;             // Risk per trade (% of balance)
-input int      InpMaxConcurrentTrades = 6;       // Maximum concurrent trades per symbol
+input int      InpMaxConcurrentTrades = 1;       // Maximum concurrent trades per symbol
 input double   InpDailyLossLimit = 30.0;         // Daily loss limit (%)
 input double   InpStepDownLevel1 = 15.0;         // First level to reduce position size (%)
 input double   InpStepDownLevel2 = 24.0;         // Second level to limit to trend direction (%)
 
 // Time-based Exit Parameters
-input int      InpLossTimeLimit = 1;             // Time to cut losses (minutes)
+input int      InpLossTimeLimit = 10;            // Time to cut losses (minutes)
 input int      InpProfitRunTimeMultiplier = 6;   // Profit run time multiplier
-input double   InpMinProfitPoints = 10.0;        // Minimum profit points to consider trade profitable
+input double   InpMinProfitPoints = 15.0;        // Minimum profit points to consider trade profitable
+input double   InpCommissionPoints = 10.0;       // Commission in points per trade (1 pip = 10 points)
+input double   InpRiskRewardRatio = 1.5;         // Risk to Reward ratio (reward:risk)
 
 // Trading Hours Restrictions
 input bool     InpUseTimeRestrictions = true;    // Use trading hour restrictions
 input int      InpTradingStartHour = 6;          // Trading start hour (0-23)
-input int      InpTradingEndHour = 21;           // Trading end hour (0-23)
+input int      InpTradingEndHour = 20;           // Trading end hour (0-23) - Reduced to avoid last hour trades
 input int      InpCloseAllHour = 22;             // Hour to close all trades to avoid swap (0-23)
+input int      InpMinutesBeforeSessionEnd = 30;  // Minutes before session end to stop new trades
 
 // Momentum & Volatility Parameters
-input int      InpTickMomentumPeriod = 15;       // Ticks to analyze for momentum
-input double   InpMomentumThreshold = 1.17;       // Momentum burst threshold multiplier
-input double   InpDirectionalThreshold = 0.6;   // Directional strength threshold (0.0-1.0)
-input double   InpVolatilityThreshold = 2.4;     // Volatility expansion threshold (std dev)
-input double   InpLowVolFreqThreshold = 0.6;    // Low volatility frequency threshold
+input int      InpTickMomentumPeriod = 30;       // Ticks to analyze for momentum (increased)
+input double   InpMomentumThreshold = 2.0;       // Momentum burst threshold multiplier (increased)
+input double   InpDirectionalThreshold = 0.7;     // Directional strength threshold (0.0-1.0) (increased)
+input double   InpVolatilityThreshold = 2.0;     // Volatility expansion threshold (std dev)
+input double   InpLowVolFreqThreshold = 0.6;     // Low volatility frequency threshold (increased)
 
 // Global Variables
 // ===============================
@@ -71,6 +74,7 @@ struct TradeData {
    double stopLoss;                               // Current stop loss
    double takeProfit;                             // Current take profit
    bool isLong;                                   // Long or short position
+   bool partialClosed;                            // Flag for partial close
 };
 TradeData OpenTrades[10];                         // Track open trades
 int OpenTradeCount = 0;                           // Count of open trades
@@ -257,6 +261,12 @@ void CheckEntrySignals()
    // Check for enough tick data
    if(LastTickTime == 0 || AvgTickVelocity == 0) return;
    
+   // First check - if we've had a recent trade, don't trade again too soon
+   static datetime lastTradeTime = 0;
+   if(TimeCurrent() - lastTradeTime < 5 * 60) { // Minimum 5 minutes between trade entries
+      return;
+   }
+   
    // Calculate directional strength
    int upTicks = 0;
    int downTicks = 0;
@@ -284,18 +294,24 @@ void CheckEntrySignals()
    bool volatilityOK = CheckVolatilityConditions();
    if(!volatilityOK) return;  // Exit if volatility is not suitable
    
-   // Detect momentum bursts
+   // Get current market trend for confirmation
+   double trend = CalculateTrend();
+   
+   // Calculate strength of signal (0.0 to 1.0)
+   double bullStrength = (directionStrength > 0) ? directionStrength : 0;
+   double bearStrength = (directionStrength < 0) ? -directionStrength : 0;
+   
+   // Detect momentum bursts - more stringent requirements
    bool bullishMomentum = currentTickVelocity > AvgTickVelocity * InpMomentumThreshold && 
-                          directionStrength > InpDirectionalThreshold;
+                          directionStrength > InpDirectionalThreshold &&
+                          (trend > 0 || bullStrength > InpDirectionalThreshold + 0.15); // Stronger signal needed against trend
                           
    bool bearishMomentum = currentTickVelocity > AvgTickVelocity * InpMomentumThreshold && 
-                          directionStrength < -InpDirectionalThreshold;
+                          directionStrength < -InpDirectionalThreshold &&
+                          (trend < 0 || bearStrength > InpDirectionalThreshold + 0.15); // Stronger signal needed against trend
    
    // Check if trend direction only is enforced
    if(TrendDirectionOnly) {
-      // Determine overall trend (using last 1000 ticks)
-      double trend = CalculateTrend();
-      
       // Only allow trades in trend direction
       if(trend > 0) bearishMomentum = false;
       else if(trend < 0) bullishMomentum = false;
@@ -304,9 +320,11 @@ void CheckEntrySignals()
    // Execute trades based on signals
    if(bullishMomentum) {
       OpenTrade(true);  // Long
+      lastTradeTime = TimeCurrent(); // Update last trade time
    }
    else if(bearishMomentum) {
       OpenTrade(false);  // Short
+      lastTradeTime = TimeCurrent(); // Update last trade time
    }
 }
 
@@ -338,9 +356,11 @@ bool CheckVolatilityConditions()
    // Detect low volatility (frequency based)
    bool lowVolatility = (BaselineTickFrequency > 0 && (double)TicksPerSecond < BaselineTickFrequency * InpLowVolFreqThreshold);
    
-   // Avoid high volatility (may cause slippage)
-   // Avoid extremely low volatility (may indicate ranging/flat market)
-   return !highVolatility && !lowVolatility;
+   // Check average tick frequency
+   bool tickFrequencyOK = (BaselineTickFrequency > 0 && TicksPerSecond > BaselineTickFrequency * 0.8);
+   
+   // Avoid: high volatility, extremely low volatility, and low tick frequency
+   return !highVolatility && !lowVolatility && tickFrequencyOK;
 }
 
 //+------------------------------------------------------------------+
@@ -378,15 +398,25 @@ void OpenTrade(bool isLong)
    // Check if we can trade
    if(!TradingAllowed || OpenTradeCount >= InpMaxConcurrentTrades) return;
    
-   // Check if within trading hours
-   if(InpUseTimeRestrictions && !IsWithinTradingHours()) {
-      Print("Trade signal detected but outside trading hours (", InpTradingStartHour, ":00 - ", InpTradingEndHour, ":00)");
-      return;
+   // Check if within trading hours and not too close to session end
+   if(InpUseTimeRestrictions) {
+      if(!IsWithinTradingHours()) {
+         Print("Trade signal detected but outside trading hours (", InpTradingStartHour, ":00 - ", InpTradingEndHour, ":00)");
+         return;
+      }
+      
+      // Check if too close to the end of trading session
+      MqlDateTime currentTime;
+      TimeToStruct(TimeCurrent(), currentTime);
+      if(currentTime.hour == InpTradingEndHour && currentTime.min >= (60 - InpMinutesBeforeSessionEnd)) {
+         Print("Trade signal detected but too close to session end time");
+         return;
+      }
    }
    
    // Calculate position size based on risk
+   double stopLossDistance = 50 * POINT_VALUE;  // Wider stop loss (increased from 20)
    double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (InpRiskPercent / 100.0) * ReducedRiskFactor;
-   double stopLossDistance = 150 * POINT_VALUE;  // Initial SL distance (to be adjusted)
    double positionSize = CalculatePositionSize(riskAmount, stopLossDistance);
    
    // Define entry price
@@ -394,7 +424,10 @@ void OpenTrade(bool isLong)
    
    // Define initial stop loss and take profit levels
    double stopLoss = isLong ? entryPrice - stopLossDistance : entryPrice + stopLossDistance;
-   double takeProfit = 0;  // We'll use trailing stop based on time
+   
+   // Calculate take profit based on risk-reward ratio
+   double takeProfitDistance = stopLossDistance * InpRiskRewardRatio;
+   double takeProfit = isLong ? entryPrice + takeProfitDistance : entryPrice - takeProfitDistance;
    
    // Place the order
    bool result = false;
@@ -412,10 +445,10 @@ void OpenTrade(bool isLong)
       if(OpenTradeCount < 10) {
          OpenTrades[OpenTradeCount].ticket = ticket;
          OpenTrades[OpenTradeCount].openPrice = entryPrice;
-         OpenTrades[OpenTradeCount].openTime = TimeCurrent();
-         OpenTrades[OpenTradeCount].stopLoss = stopLoss;
+         OpenTrades[OpenTradeCount].openTime = TimeCurrent();         OpenTrades[OpenTradeCount].stopLoss = stopLoss;
          OpenTrades[OpenTradeCount].takeProfit = takeProfit;
          OpenTrades[OpenTradeCount].isLong = isLong;
+         OpenTrades[OpenTradeCount].partialClosed = false;
          
          OpenTradeCount++;
          
@@ -556,33 +589,87 @@ void ManageOpenTrades()
       }
         // Calculate trade duration in minutes
       double tradeMinutes = (double)(currentTime - OpenTrades[i].openTime) / 60.0;
-      
-      // Calculate profit in points
+        // Calculate profit in points
       double pointSize = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
       double positionVolume = PositionGetDouble(POSITION_VOLUME);
       double currentPricePoints = (currentPrice - OpenTrades[i].openPrice) / pointSize;
       if(!OpenTrades[i].isLong) currentPricePoints = -currentPricePoints;  // Invert for short positions
       
-      // Time-based exit logic
+      // Adjust for commission
+      double adjustedProfitPoints = currentPricePoints - InpCommissionPoints;
+        // Time-based exit logic
       if(currentProfit < 0 && tradeMinutes >= InpLossTimeLimit) {
          // Cut losses short after time limit reached
          Print("Closing losing trade after time limit: ", OpenTrades[i].ticket);
          Trade.PositionClose(OpenTrades[i].ticket);
       }
-      else if(currentProfit > 0 && currentPricePoints >= InpMinProfitPoints) {
-         // Let profits run - widen stop loss based on time in trade
+      // Close extremely poor performing trades even if they haven't hit the time limit
+      else if(currentProfit < -50 && adjustedProfitPoints < -60) {
+         Print("Closing significantly losing trade early: ", OpenTrades[i].ticket);
+         Trade.PositionClose(OpenTrades[i].ticket);
+      }
+      // Break-even logic for trades that are in small profit but below minimum profit threshold
+      else if(currentProfit > 0 && currentPricePoints >= 5.0 && currentPricePoints < InpMinProfitPoints) {
+         double breakEvenLevel;
          
-         // Calculate new stop loss level based on time multiplier
+         if(OpenTrades[i].isLong) {
+            breakEvenLevel = OpenTrades[i].openPrice + 3 * POINT_VALUE; // Entry + 3 points
+            if(OpenTrades[i].stopLoss < breakEvenLevel) {
+                OpenTrades[i].stopLoss = breakEvenLevel;
+                Trade.PositionModify(OpenTrades[i].ticket, breakEvenLevel, 0);
+                Print("Position moved to break-even+: ", OpenTrades[i].ticket);
+            }
+         } else {
+            breakEvenLevel = OpenTrades[i].openPrice - 3 * POINT_VALUE; // Entry - 3 points
+            if(OpenTrades[i].stopLoss > breakEvenLevel) {
+                OpenTrades[i].stopLoss = breakEvenLevel;
+                Trade.PositionModify(OpenTrades[i].ticket, breakEvenLevel, 0);
+                Print("Position moved to break-even+: ", OpenTrades[i].ticket);
+            }
+         }
+      }
+      else if(currentProfit > 0 && currentPricePoints >= InpMinProfitPoints) {
+         // Account for commission in profit calculation
+         if(adjustedProfitPoints <= 0) continue; // Skip if not profitable after commission
+         
+         // Partial close logic for good profits
+         if(currentPricePoints >= 30 && !OpenTrades[i].partialClosed) {
+            double posVolume = PositionGetDouble(POSITION_VOLUME);
+            double partialVolume = posVolume * 0.5; // Close 50%
+            
+            if(Trade.PositionClosePartial(OpenTrades[i].ticket, partialVolume)) {
+               Print("Partial close executed for ticket: ", OpenTrades[i].ticket);
+               OpenTrades[i].partialClosed = true;
+            }
+         }
+         
+         // Calculate new stop loss level based on time and profit
          double profitRunTime = InpLossTimeLimit * InpProfitRunTimeMultiplier;
          double timeRatio = MathMin(1.0, tradeMinutes / profitRunTime);
+           // More aggressive trailing factor (0.9 instead of 0.8)
+         double trailingFactor = 0.9;
          
-         // Calculate trailing stop distance based on profit
+         // Additional time acceleration factor
+         double timeAcceleration = 1.0 + timeRatio; // Ranges from 1.0 to 2.0
+         
+         // Add profit-based protection - the more profit we have, the tighter we trail
+         double profitAcceleration = 1.0;
+         if(adjustedProfitPoints > 40) profitAcceleration = 1.2;
+         if(adjustedProfitPoints > 60) profitAcceleration = 1.5;
+         
+         // Calculate trailing stop distance
          double trailDistance;
          
          if(OpenTrades[i].isLong) {
             // For long positions
             double priceDiff = currentPrice - OpenTrades[i].openPrice;
-            trailDistance = OpenTrades[i].openPrice + priceDiff * timeRatio * 0.5;
+            
+            // Break-even + buffer once we're profitable enough
+            if(adjustedProfitPoints >= 20 && OpenTrades[i].stopLoss < OpenTrades[i].openPrice) {
+               trailDistance = OpenTrades[i].openPrice + 5 * POINT_VALUE; // Entry + 5 points buffer
+            } else {               // More aggressive trail with time and profit acceleration
+               trailDistance = OpenTrades[i].openPrice + priceDiff * timeRatio * trailingFactor * timeAcceleration * profitAcceleration;
+            }
             
             // Update stop loss if it would move up
             if(trailDistance > OpenTrades[i].stopLoss) {
@@ -592,7 +679,13 @@ void ManageOpenTrades()
          } else {
             // For short positions
             double priceDiff = OpenTrades[i].openPrice - currentPrice;
-            trailDistance = OpenTrades[i].openPrice - priceDiff * timeRatio * 0.5;
+            
+            // Break-even + buffer once we're profitable enough
+            if(adjustedProfitPoints >= 20 && (OpenTrades[i].stopLoss > OpenTrades[i].openPrice || OpenTrades[i].stopLoss == 0)) {
+               trailDistance = OpenTrades[i].openPrice - 5 * POINT_VALUE; // Entry - 5 points buffer
+            } else {               // More aggressive trail with time and profit acceleration
+               trailDistance = OpenTrades[i].openPrice - priceDiff * timeRatio * trailingFactor * timeAcceleration * profitAcceleration;
+            }
             
             // Update stop loss if it would move down
             if(trailDistance < OpenTrades[i].stopLoss || OpenTrades[i].stopLoss == 0) {

@@ -42,6 +42,10 @@ The TimePivot EA implements a "cut losses short, let profits run long" philosoph
 - Profit run time multiplier: 6x the loss time limit
 - Minimum profit threshold: 10 points required before trailing stop is activated
 - Dynamic trailing stops that widen based on trade duration
+- Break-even functionality that secures small profits (moves stop loss to entry + 3 points)
+- Commission handling with 10 points per trade factored into profit calculations
+- Aggressive trailing stop with time acceleration factor for better profit capture
+- Partial position closing at 30+ points profit (closes 50% of position)
 
 ## Trading Hours Restrictions
 
@@ -72,6 +76,7 @@ The TimePivot EA implements a "cut losses short, let profits run long" philosoph
 - **InpLossTimeLimit** (default: 3): Minutes to cut losses
 - **InpProfitRunTimeMultiplier** (default: 6): Multiplier for profit run time
 - **InpMinProfitPoints** (default: 10.0): Minimum profit in points before trailing stop is activated
+- **InpCommissionPoints** (default: 10.0): Commission in points per trade (1 pip = 10 points)
 
 ### Trading Hours Parameters
 
